@@ -2,12 +2,12 @@ import numpy as np
 import cv2 as cv
 import util
 def pnp(K, objPoints, imgPoints):
-    ret, rvec, tvec, _ = cv.solvePnPRansac(
+    ret, rvec, tvec, inliars = cv.solvePnPRansac(
                                     objPoints,
                                     imgPoints,
                                     K,
-                                    None)
-    return rvec, tvec
+                                    None,)
+    return rvec, tvec, inliars
 
 if __name__ == "__main__":
     import util

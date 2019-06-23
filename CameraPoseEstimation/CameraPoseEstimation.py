@@ -31,18 +31,19 @@ def cal_possible_RT(E):
             RTs[idx][1] = -R
     return RTs
 
-def cheirality_check(K, R, T, kp1s, kp2s, matches):
+def cheirality_check(K, R, T, kp1s, kp2s):
     valid_count = 0
     #print("len of matches",len(matches))
     points3D = trgl.linear_triangulation(kp1s, 
-                                            kp2s,
-                                            K, R, T,
-                                            matches)
-    for [X, Y, Z] in points3D:
+                                         kp2s,
+                                         K, R, T)
+    matches = [0] * len(kp1s)
+    for idx, [X, Y, Z] in enumerate(points3D):
         Z = R[2].dot((np.array([X, Y, Z])).reshape((3,1))) + T[2]
-        if Z[0] > 10:
+        if Z[0] > 0.0001:
                 valid_count += 1
-    return valid_count, valid_count * 1.0 / len(matches)
+                matches[idx] = 1
+    return valid_count * 1.0 / len(matches), matches
 
 if __name__ == "__main__":
-    cheirality_check(0,0,0,0,0,0)
+    cheirality_check(0,0,0,0,0)

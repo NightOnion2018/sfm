@@ -90,7 +90,6 @@ def output(outstream, campos_list, landmark):
             for j in range(4):
                 outstream.write(str(P[i][j])+" ")
             outstream.write('\n')
-        outstream.write('\n')
 
 
 def cv2_validation(campos_list):
@@ -128,7 +127,7 @@ def cv2_validation(campos_list):
 
 
 if __name__ == "__main__":
-    num_cams = 10
+    num_cams = 5
     num_landmarks = 1000
     f_x = 1077
     f_y = 1077
@@ -138,7 +137,7 @@ if __name__ == "__main__":
     os.system("rm -rf gen_images; mkdir gen_images ")
     landmark = None
     for i in range(num_cams):
-        theta_x = 0 + 10 * i
+        theta_x = 0 + 30 * i
         theta_y = 0 + 0 * i
         theta_z = 0 + 0 * i
         t_x = 50 * i

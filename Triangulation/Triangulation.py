@@ -3,7 +3,7 @@ import cv2
 import scipy
 from scipy.optimize import root
 
-def linear_triangulation(kp1, kp2, K, R, T, matches):
+def linear_triangulation(kp1, kp2, K, R, T):
     """
     input kp1: list of key points
     input kp2: list of key points
@@ -15,12 +15,9 @@ def linear_triangulation(kp1, kp2, K, R, T, matches):
     P = np.dot(K, P)
     P_p = np.column_stack([R, T])
     P_p = np.dot(K, P_p)
-    for match in matches:
-        p1_idx = match.queryIdx
-        p2_idx = match.trainIdx
-        p1, p2 = kp1[p1_idx], kp2[p2_idx]
-        u, v = p1.pt
-        u_p, v_p = p2.pt
+    for p1, p2 in zip(kp1, kp2):
+        u, v = p1
+        u_p, v_p = p2
         A = np.ndarray([4, 4], dtype = np.float)
         A[0][0] = v * P[2][0] - P[1][0]
         A[0][1] = v * P[2][1] - P[1][1]

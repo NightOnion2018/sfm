@@ -6,7 +6,8 @@ import glob
 import copy
 import sys
 from util import print_matrix
-from CameraPoseEstimation.CameraPoseEstimation import e_estimation
+import CameraPoseEstimation.CameraPoseEstimation as cpe
+from PerspectiveNPoint import PnP as pnp
 
 class Landmark(object):
     def __init__(self, x=0, y=0, z=0):
@@ -56,6 +57,7 @@ class SFM(object):
         self.matcher = cv2.DescriptorMatcher().create(cv2.DESCRIPTOR_MATCHER_BRUTEFORCE)
         self.images = []
         self.landmarks = []
+        self.F_mats = {}
 
         # initialization
         self.image_names = glob.glob(self.dataset)
@@ -65,7 +67,6 @@ class SFM(object):
             self.image_names = self.image_names[0:num_images]
         self.image_names.sort(key=lambda x: len(x))
         self.load_K()
-
 
     def load_K(self):
         K_txt = "/".join(self.dataset.split('/')[:-1]+['K.txt'])
@@ -146,7 +147,7 @@ class SFM(object):
                 src = np.float32([pt for pt in src])
                 dst = np.float32([pt for pt in dst])
                 F, masks = cv2.findFundamentalMat(src, dst, cv2.FM_RANSAC, ransacReprojThreshold = 3, confidence = 0.99)
-                im_j.F = F
+                self.F_mats[(i, j)] = F
                 print("Feature Matching",i,'vs.',j,'=',np.sum(masks),'/',src.shape[0])
                 if logging:
                     print("Feature Matching",i,'vs.',j,'=',np.sum(masks),'/',src.shape[0])
@@ -192,15 +193,16 @@ class SFM(object):
                 print('    ',pt)
                 print('    ',(u[0], v[0]))
 
-    def pose_recover(self, logging = False):
-        if 0:
+    def pose_recover(self, logging = False, validate_mode = False):
+        if validate_mode:
             ret, landmark_kp_mapping = read_g2o('/Users/patrickji/workspace/visual_code/SctructureFromMotion/SFM_example/sfm_gen.g2o')
             self.images = []
             self.image_names = []
             self.FOCAL_LENGTH = ret['f_x']
             c_x, c_y = ret['c_x'], ret['c_y']
             f_x = ret['f_x']
-            self.K = np.array([[f_x, 0, c_x], [0, f_x, c_y], [0, 0, 1]])
+            self.K = np.array([[f_x, 0, c_x], [0, f_x, c_y], [0, 0, 1]], dtype=np.float)
+            #self.F_mats = ret['f_mats']
             for i in range(ret['num_pos']):
                 pos = ImagePose()
                 self.images.append(pos)
@@ -230,129 +232,134 @@ class SFM(object):
 
         recovered_landmarks = []
 
-        for idx, p_img in enumerate(self.images[:-1]):
+        for p_img_idx, p_img in enumerate(self.images[:-1]):
             # p_img means previous images
-            c_img = self.images[idx + 1] # current images
+            c_img_idx = p_img_idx + 1
+            c_img = self.images[c_img_idx] # current images
             src, dst = [], []
             p_kp_used = []
             for i in range(len(p_img.kp)):
-                if i in p_img.kp_kp and idx + 1 in p_img.kp_kp[i]:
-                    dst_kp_idx = p_img.kp_kp[i][idx + 1]
+                if i in p_img.kp_kp and c_img_idx in p_img.kp_kp[i]:
+                    dst_kp_idx = p_img.kp_kp[i][c_img_idx]
                     src.append(p_img.kp[i].pt)
                     dst.append(c_img.kp[dst_kp_idx].pt)
                     p_kp_used.append(i)
             
             src = np.float32([pt for pt in src])
             dst = np.float32([pt for pt in dst])
-            #E = e_estimation(c_img.F, self.K)
+
             #src = cv2.undistortPoints(np.expand_dims(src, axis = 1), self.K, distCoeffs=None)
             #dst = cv2.undistortPoints(np.expand_dims(dst, axis = 1), self.K, distCoeffs=None)
             #src = np.reshape(src, (src.shape[0], -1))
             #dst = np.reshape(dst, (dst.shape[0], -1))
-            E, mask = cv2.findEssentialMat(src, dst, 
-                                            cameraMatrix = self.K, 
-                                            method=cv2.FM_RANSAC, 
-                                            prob = 0.99, 
-                                            threshold = 1.0)
-            _, local_R, local_T, mask = cv2.recoverPose(E, src, dst, 
-                                                        cameraMatrix = self.K, mask = mask)
-            T = np.eye(4)
-            T[0:3, 0:3] = local_R
-            T[0:3, 3:4] = local_T
-            P = None
-            c_img.T = T.dot(p_img.T)
-            R, t = c_img.T[0:3, 0:3], c_img.T[0:3, 3:4]
-            P = np.column_stack([R, t])
-            c_img.P = self.K.dot(P)
 
-            # triangulate
-            points4D = cv2.triangulatePoints(p_img.P, c_img.P, src.transpose(), dst.transpose())
+        
+            if p_img_idx == 0:
+                F, mask = cv2.findFundamentalMat(src, dst, cv2.FM_RANSAC)
+                E = cpe.e_estimation(F, self.K)
+                #E = cpe.e_estimation(self.F_mats[(p_img_idx, c_img_idx)], self.K)
+                RTs = cpe.cal_possible_RT(E)
+                best_RT, max_val_perc, best_mask = None, -1, None
+                for i, (T, R) in enumerate(RTs):
+                    val_perc, mask = cpe.cheirality_check(self.K, R, T,
+                                                         src,
+                                                         dst)
+                    if val_perc > max_val_perc:
+                        best_RT = [R, T]
+                        max_val_perc = val_perc
+                        best_mask = mask
+                local_R, local_T = best_RT[0], best_RT[1].reshape(3, 1)
+                mask = best_mask
+                print("The Correct RT is\n",np.column_stack([local_R, local_T]), "\n with confidence of", max_val_perc*100, '%')
 
-            # scale back
-            if idx > 0:
-                scale = 0.0
-                count = 0
-                p_camera_x = p_img.T[0, 3]
-                p_camera_y = p_img.T[1, 3]
-                p_camera_z = p_img.T[2, 3]
-                new_pts = []
-                existing_pts = []
-
-                log0, log1, log2 = 0, 0, 0
-                for j, kp_idx in enumerate(p_kp_used):
-                    used_during_pose_recovery = (mask[j] != 0)
-                    exist_in_prev_landmark = p_img.kp_landmark_exist(kp_idx)
-
-                    if used_during_pose_recovery: log0 += 1
-                    if exist_in_prev_landmark: log2 += 1
-
-                    if used_during_pose_recovery and exist_in_prev_landmark:
-                        point_x = points4D[0, j] / points4D[3, j]
-                        point_y = points4D[1, j] / points4D[3, j]
-                        point_z = points4D[2, j] / points4D[3, j]
-
-                        landmark_idx = p_img.kp_landmark[kp_idx]
-                        new_pts.append([point_x, point_y, point_z])
-                        existing_pts.append(self.landmarks[landmark_idx].get_avg_pos())
-
-                # calculate the scale
-                for j, (new_pt_0, existing_pt_0) in enumerate(list(zip(new_pts, existing_pts))[:-1]):
-                    for new_pt_1, existing_pt_1 in list(zip(new_pts, existing_pts))[j + 1:]:
-                        pa_0, pb_0 = np.array(new_pt_0), np.array(existing_pt_0)
-                        pa_1, pb_1 = np.array(new_pt_1), np.array(existing_pt_1)
-                        scale += (np.linalg.norm(pb_0 - pb_1) / np.linalg.norm(pa_0 - pa_1))
-                        count += 1
-                if count == 0:
-                    print("img", idx, 'and img',idx + 1,'doesnt match at all')
-                    print(log0, log2)
-                    print(self.image_names[idx])
-                    print(self.image_names[idx + 1])
-                
-                assert(count > 0)
-                scale /= count
-
-                # apply scale and recal T and P
-                local_T *= scale
-                # local transform
-                T = np.eye(4, dtype= np.float)
+                T = np.eye(4)
                 T[0:3, 0:3] = local_R
                 T[0:3, 3:4] = local_T
-
-                P = None
-                # accumulate transform
                 c_img.T = T.dot(p_img.T)
-                # make projection matrix
                 R, t = c_img.T[0:3, 0:3], c_img.T[0:3, 3:4]
                 P = np.column_stack([R, t])
                 c_img.P = self.K.dot(P)
-
+                
+                print("Triangulate Between First Two Images")
                 points4D = cv2.triangulatePoints(p_img.P, 
-                                                c_img.P, 
-                                                src.transpose(), 
-                                                dst.transpose())
+                                                 c_img.P, 
+                                                 src.transpose(), 
+                                                 dst.transpose())
+                for j, maskv in enumerate(mask):
+                    if maskv != 0:
+                        p_kp_idx = p_kp_used[j]
+                        match_idx = p_img.kp_kp[p_kp_idx][c_img_idx]
+                        pt3d_x = points4D[0, j] / points4D[3, j]
+                        pt3d_y = points4D[1, j] / points4D[3, j]
+                        pt3d_z = points4D[2, j] / points4D[3, j]
 
-            print("find good triangulated points")
-            for j in range(len(p_kp_used)):
-                if mask[j] != 0:
-                    p_kp_idx = p_kp_used[j]
-                    match_idx = p_img.kp_kp[p_kp_idx][idx + 1]
-                    pt3d_x = points4D[0, j] / points4D[3, j]
-                    pt3d_y = points4D[1, j] / points4D[3, j]
-                    pt3d_z = points4D[2, j] / points4D[3, j]
-                    pt3d = np.array([pt3d_x, pt3d_y, pt3d_z])
-
-                    if p_img.kp_landmark_exist(p_kp_idx):
-                        c_img.set_kp_landmark(match_idx, p_img.kp_landmark[p_kp_idx])
-
-                        self.landmarks[p_img.kp_landmark[p_kp_idx]].pt += pt3d
-                        self.landmarks[p_img.kp_landmark[p_kp_idx]].seen += 1
-                    else:
                         new_landmark = Landmark(pt3d_x, pt3d_y, pt3d_z)
                         new_landmark.seen = 2
                         self.landmarks.append(new_landmark)
                         p_img.set_kp_landmark(p_kp_idx, len(self.landmarks) - 1)
                         c_img.set_kp_landmark(match_idx, len(self.landmarks) - 1)
-                        recovered_landmarks.append([idx, p_kp_idx])
+                        recovered_landmarks.append([p_img_idx, p_kp_idx])
+            else:
+                print("Triangulate Between IMG["+str(p_img_idx)+"] and IMG["+str(c_img_idx)+"]")
+
+                # step 0: find the matched landmark in p_img and use pnp to recover rvec, tvec
+                existing_landmark_count = 0
+                for used_kp_idx in range(len(dst)):
+                    p_img_kp_idx = p_kp_used[used_kp_idx]
+                    if p_img_kp_idx in p_img.kp_landmark:
+                        existing_landmark_count += 1
+                objPoints = np.ndarray((existing_landmark_count, 3, 1))
+                imgPoints = np.ndarray((existing_landmark_count, 2, 1))
+                print("PNP IMG["+str(c_img_idx)+"] With "+str(existing_landmark_count)+" Landmarks")
+                assert(existing_landmark_count > 8)
+                current_pos = 0
+                for used_kp_idx in range(len(dst)):
+                    p_img_kp_idx = p_kp_used[used_kp_idx]
+                    if p_img_kp_idx not in p_img.kp_landmark:
+                        continue
+                    landmark_idx = p_img.kp_landmark[p_img_kp_idx]
+                    imgPoints[current_pos][0] = dst[used_kp_idx][0]
+                    imgPoints[current_pos][1] = dst[used_kp_idx][1]
+                    landmark_pt = self.landmarks[landmark_idx].get_avg_pos()
+                    objPoints[current_pos][0] = landmark_pt[0]
+                    objPoints[current_pos][1] = landmark_pt[1]
+                    objPoints[current_pos][2] = landmark_pt[2]
+                    current_pos += 1
+
+                rvec, tvec, inliers = pnp.pnp(self.K, objPoints, imgPoints) # should use EPNP for noisy model
+                rmat = cv2.Rodrigues(rvec)[0]
+                #print("IMG["+str(c_img_idx)+"] RT: \n", np.column_stack([rmat, tvec]))
+
+                c_img.T = np.eye(4)
+                c_img.T[0:3, 0:3] = rmat
+                c_img.T[0:3, 3:4] = tvec
+                c_img.P = self.K.dot(c_img.T[0:3, 0:4])
+
+                # step 1: use the rmat, tvec to calculate the new landmarks and add landmarks
+                points4D = cv2.triangulatePoints(p_img.P, 
+                                                 c_img.P, 
+                                                 src.transpose(), 
+                                                 dst.transpose())
+                for used_kp_idx in range(len(dst)):
+                    p_img_kp_idx = p_kp_used[used_kp_idx]
+                    c_img_kp_idx = p_img.kp_kp[p_img_kp_idx][c_img_idx]
+                    harmonic_v = points4D[3, used_kp_idx]
+                    pt3d_x = points4D[0, used_kp_idx] / harmonic_v
+                    pt3d_y = points4D[1, used_kp_idx] / harmonic_v
+                    pt3d_z = points4D[2, used_kp_idx] / harmonic_v
+                    if p_img_kp_idx not in p_img.kp_landmark:
+                        landmark = Landmark(pt3d_x, pt3d_y, pt3d_z)
+                        landmark.seen = 2
+                        self.landmarks.append(landmark)
+                        landmark_idx = len(self.landmarks) - 1
+                        p_img.set_kp_landmark(p_img_kp_idx, landmark_idx)
+                        c_img.set_kp_landmark(c_img_kp_idx, landmark_idx)
+                    else:
+                        landmark_idx = p_img.kp_landmark[p_img_kp_idx]
+                        c_img.set_kp_landmark(c_img_kp_idx, landmark_idx)
+                        pt3d = np.array([pt3d_x, pt3d_y, pt3d_z])
+                        self.landmarks[landmark_idx].pt += pt3d
+                        self.landmarks[landmark_idx].seen += 1
 
         for landmark_i, landmark in enumerate(self.landmarks):
             if landmark.seen > 2:
@@ -372,13 +379,11 @@ class SFM(object):
                             print((x - ox, y - oy, z - oz))
         
         scale = 1 #50.0 / self.images[1].T[0, 3]
-        for idx, c_img in enumerate(self.images):
+        for c_img_idx, c_img in enumerate(self.images):
             T = c_img.T
             T[0:3, 3] = T[0:3, 3] * scale
-            print("c_img["+str(idx)+"].P=")
-            #print(T[0:3, 0:4])
+            print("c_img["+str(c_img_idx)+"].P=")
             print_matrix(T[0:3, 0: 4])
-            #print_matrix(c_img.P)
 
 def read_g2o(path):
     def get_line(inputstream):
@@ -412,6 +417,22 @@ def read_g2o(path):
             landmarks_kp_mapping[landmark_idx].append([im_idx, j, (u, v)])
     for i in range(ret['num_pos']):
         ret["image_"+str(i)+"_name"] = get_line(f)[0]
+
+
+    # skip p_matrix
+    for i in range(ret['num_pos']):
+        get_line(f)
+        get_line(f)
+        get_line(f)
+    return [ret, landmarks_kp_mapping]
+    # read fundamental matrix
+    ret['f_mats'] = {}
+    for i in range(ret['num_pos']):
+        f00, f01, f02 = get_line(f)[:3]
+        f10, f11, f12 = get_line(f)[:3]
+        f20, f21, f22 = get_line(f)[:3]
+        F = np.array([[f00, f01, f02], [f10, f11, f12], [f20, f21, f22]])
+        ret['f_mats'][(i, i + 1)] = f
     f.close()
     return [ret, landmarks_kp_mapping]
 
@@ -419,22 +440,24 @@ def read_g2o(path):
 if __name__ == "__main__":
     #dataset ="/Users/patrickji/workspace/visual_code/SctructureFromMotion/DataSet/desktop/*.jpg"
     PROJ_DIR = "/Users/patrickji/workspace/visual_code/SctructureFromMotion/"
-    dataset = ["DataSet/hall/*.jpg",  10]
-    dataset = ["DataSet/castle/*.JPG",10]
-    dataset = ["DataSet/gelou/*.JPG", 10]
-    dataset = ["DataSet/cabin/*.JPG", 10]
-    dataset = ["DataSet/desk/*.JPG",  10]
     dataset = ["DataSet/Condo/*.jpg",   10]
     dataset = ["DataSet/berlin/*.jpg",   10]
-    dataset = ["DataSet/fan/*.JPG",   10]
-    dataset = ["DataSet/desktop/*.JPG",  10]
     dataset = ["DataSet/bed/*.JPG",  3]
+    dataset = ["DataSet/desk/*.JPG",  10, 'Good']
+    dataset = ["DataSet/desktop/*.JPG",  10]
+    dataset = ["DataSet/fan/*.JPG",   3]
+    dataset = ["DataSet/castle/*.JPG",11, 'Good']
+    dataset = ["DataSet/hall/*.jpg",  30]
+    dataset = ["DataSet/cabin/*.JPG", 10]
+    VALIDATE_MODE = False
     sfm = SFM(dataset=PROJ_DIR+dataset[0], 
                 num_images = dataset[1], 
                 use_dummy = False)
-    sfm.feature_extraction()
-    sfm.feature_matching(logging=False, view_match=False)
-    sfm.pose_recover()
+    if not VALIDATE_MODE:
+        sfm.feature_extraction()
+        sfm.feature_matching(logging=False, view_match=False)
+    #sfm.pose_recover_validate()
+    sfm.pose_recover(validate_mode=VALIDATE_MODE)
     #sfm.output(sys.stdout)
     f = open('sfm.g2o', 'w')
     sfm.output(f)
