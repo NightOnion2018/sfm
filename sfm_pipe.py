@@ -6,7 +6,7 @@ import glob
 import copy
 import sys
 from util import print_matrix
-
+from CameraPoseEstimation.CameraPoseEstimation import e_estimation
 
 class Landmark(object):
     def __init__(self, x=0, y=0, z=0):
@@ -47,21 +47,6 @@ class ImagePose(object):
 
     def kp_landmark_exist(self, kp_idx):
         return kp_idx in self.kp_landmark
-
-def e_estimation(F, K):
-    """
-    Input F: Fundamental Matrix
-    Input K: Intrisic Matrix
-    Output E: Essential Matrix, E = np.transpose(np.inv(K)) * F * K
-    """
-    K_t = np.transpose(K)
-    E = np.dot(np.dot(K_t, F), K)
-    u, sigma, v_t = np.linalg.svd(E)
-    sigma[2] = 0
-    #sigma = np.array([[sigma[0], 0, 0], [0, sigma[1], 0], [0,0,0]])
-    sigma = np.array([[1, 0, 0], [0, 1, 0], [0,0,0]])
-    E = np.dot(np.dot(u, sigma), v_t)
-    return E
 
 class SFM(object):
     def __init__(self, dataset, downsample=1, num_images=-1, use_dummy=False):
@@ -394,8 +379,6 @@ class SFM(object):
             #print(T[0:3, 0:4])
             print_matrix(T[0:3, 0: 4])
             #print_matrix(c_img.P)
-
-
 
 def read_g2o(path):
     def get_line(inputstream):
