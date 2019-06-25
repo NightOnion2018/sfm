@@ -37,6 +37,7 @@ def calibrate(path, logging = False):
     objpoints = []  # 3d point in real world space
     imgpoints = []  # 2d points in image plane.
     images = glob.glob(path)
+    used_images = []
     for fname in images:
         img = cv.imread(fname)
         #print("Processing "+fname)
@@ -45,12 +46,11 @@ def calibrate(path, logging = False):
         ret, corners = cv.findChessboardCorners(gray, points_to_find, None)
         # If found, add object points, image points (after refining them)
         if ret == True:
-            new_name = fname.split('*')[0]+'.jpg'
-            #os.system("mv "+fname+" "+new_name)
             print("Find enough Corners in "+fname)
             objpoints.append(objp)
             corners2 = cv.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
             imgpoints.append(corners)
+            used_images.append(fname)
             # Draw and display the corners
             if 0:
                 cv.drawChessboardCorners(img, points_to_find, corners2, ret)
@@ -61,6 +61,21 @@ def calibrate(path, logging = False):
     cv.destroyAllWindows()
     ret, mtx, dist, rvecs, tvecs = cv.calibrateCamera(
                         objpoints, imgpoints, gray.shape[::-1], None, None)
+
+    K_path = '/'.join(path.split('/')[:-1])+"/K.txt"
+    dist_path = '/'.join(path.split('/')[:-1])+"/dist.txt"
+    f = open(K_path, 'w')
+    for i in range(3):
+        for j in range(3):
+            f.write(str(mtx[i, j]) + " ")
+        f.write('\n')
+    f.close()
+    
+    f = open(dist_path, 'w')
+    for i in range(5):
+        f.write(str(dist[0,i]) + ' ')
+    f.close()
+    
     if logging:
         print("intrisc matrix")
         print(mtx)
@@ -68,8 +83,37 @@ def calibrate(path, logging = False):
         print(dist)
     return mtx
 
+def undistort(cal_path, path):
+    mtx = np.ndarray((3,3))
+    dist = np.ndarray((1, 5))
+    mtx_f = open(cal_path+"/K.txt", 'r')
+    for i in range(3):
+        line = mtx_f.readline()
+        fields = list(map(float, line.split()))
+        for j in range(3):
+            mtx[i, j] = fields[j]
+    mtx_f.close()
+
+    dist_f = open(cal_path+"/dist.txt", 'r')
+    line = dist_f.readline()
+    fields = list(map(float, line.split()))
+    for i in range(5):
+        dist[0, i] = fields[i]
+    dist_f.close()
+
+    images = glob.glob(path)
+    for im_name in images:
+        new_name = im_name.rstrip('.JPG')+"_cal.JPG"
+        im = cv.imread(im_name)
+        h,  w = im.shape[:2]
+        newcameramtx, roi=cv.getOptimalNewCameraMatrix(mtx,dist,(w,h),1,(w,h))
+        dst = cv.undistort(im, mtx, dist, None, newcameramtx)
+        cv.imwrite(new_name, dst)
+
+
 if __name__ == "__main__":
     path = './DataSet/calibration/*.jpg'
     path = './DataSet/iphone_calibration/*.JPG'
     #openCameraNCal(0, num_sample = 20, save_path = "./DataSet/calibration/")
-    intrinsic = calibrate(path, logging=True)
+    #intrinsic = calibrate(path, logging=True)
+    undistort(path.rstrip("*.JPG"), "./DataSet/bed/*.JPG")
