@@ -108,7 +108,10 @@ def undistort(cal_path, path):
         h,  w = im.shape[:2]
         newcameramtx, roi=cv.getOptimalNewCameraMatrix(mtx,dist,(w,h),1,(w,h))
         dst = cv.undistort(im, mtx, dist, None, newcameramtx)
+        x,y,w,h = roi
+        dst = dst[y:y+h, x:x+w]
         cv.imwrite(new_name, dst)
+    print("new camera matrix\n",newcameramtx)
 
 
 if __name__ == "__main__":
@@ -116,4 +119,4 @@ if __name__ == "__main__":
     path = './DataSet/iphone_calibration/*.JPG'
     #openCameraNCal(0, num_sample = 20, save_path = "./DataSet/calibration/")
     #intrinsic = calibrate(path, logging=True)
-    undistort(path.rstrip("*.JPG"), "./DataSet/bed/*.JPG")
+    undistort(path.rstrip("*.JPG"), "./DataSet/desktop_org/*.JPG")
