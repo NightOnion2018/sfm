@@ -66,10 +66,13 @@ class SFM(object):
             #self.image_names = self.image_names[0:skip*num_images:skip]
             self.image_names = self.image_names[0:num_images]
         self.image_names.sort(key=lambda x: len(x))
+        if 'cal' not in self.dataset:
+            self.image_names = list(filter(lambda x: '_cal' not in x, self.image_names))
         self.load_K()
 
     def load_K(self):
-        K_txt = "/".join(self.dataset.split('/')[:-1]+['K.txt'])
+        cal = '_cal' if '_cal' in self.dataset else ''
+        K_txt = "/".join(self.dataset.split('/')[:-1]+['K'+cal+'.txt'])
         f = open(K_txt, 'r')
         K = np.zeros((3, 3))
         r = 0
@@ -440,15 +443,29 @@ def read_g2o(path):
 if __name__ == "__main__":
     #dataset ="/Users/patrickji/workspace/visual_code/SctructureFromMotion/DataSet/desktop/*.jpg"
     PROJ_DIR = "/Users/patrickji/workspace/visual_code/SctructureFromMotion/"
-    dataset = ["DataSet/Condo/*.jpg",   10]
-    dataset = ["DataSet/berlin/*.jpg",   10]
-    dataset = ["DataSet/bed/*.JPG",  3]
     dataset = ["DataSet/desk/*.JPG",  10, 'Good']
-    dataset = ["DataSet/desktop/*.JPG",  10]
-    dataset = ["DataSet/fan/*.JPG",   3]
     dataset = ["DataSet/castle/*.JPG",11, 'Good']
+    dataset = ["DataSet/fountain/*.png",  30, 'Good']
+    dataset = ["DataSet/fountain_distorted/*.png",  30, 'Good']
+    dataset = ["DataSet/herz-jesu-p8/*.png",  30, "Good"]
+    dataset = ["DataSet/fountain/*.png",  30, 'Good']
+    dataset = ["DataSet/Condo/*.jpg",   10, 'bad']
+    dataset = ["DataSet/berlin/*.jpg",   10, 'bad']
+    dataset = ["DataSet/castle-M/*.png",  30, "SoSo"]
+    dataset = ["DataSet/castle-entry/*.png",  30, 'SOSO']
+    dataset = ["DataSet/desktop_org/*.JPG",  -1, '80']
+    dataset = ["DataSet/building/*.JPG",   10, '40']
+
+    dataset = ["DataSet/desktop2/*.JPG",  -1]
+    dataset = ["DataSet/fan/*_cal.JPG",   10]
+    dataset = ["DataSet/herzjesu_distorted/*.png",  30]
     dataset = ["DataSet/hall/*.jpg",  30]
-    dataset = ["DataSet/cabin/*.JPG", 10]
+    dataset = ["DataSet/desktop3/*.JPG",  10]
+    dataset = ["DataSet/cabin/*_cal.JPG", 10]
+    dataset = ["DataSet/fan/*.JPG",   5]
+    dataset = ["DataSet/desktop/*.JPG",  5]
+    dataset = ["DataSet/castle-L/*.png",  30, "SoSo"]
+    dataset = ["DataSet/bed/*.JPG",  2]
     VALIDATE_MODE = False
     sfm = SFM(dataset=PROJ_DIR+dataset[0], 
                 num_images = dataset[1], 
